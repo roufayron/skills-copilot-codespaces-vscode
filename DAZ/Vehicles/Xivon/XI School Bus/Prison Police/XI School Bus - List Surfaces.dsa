@@ -1,0 +1,82 @@
+// DAZ Studio version 4.x
+// XI School Bus - List Surfaces
+//
+// Diagnostic helper for the "Prison Police" preset. Select the bus and run
+// this script: every surface of the bus (and of its child nodes) is printed
+// to the log (Help > Troubleshooting > View Log File) together with its
+// shader, base color and texture map. Nothing is changed.
+
+(function () {
+
+	function getColorProp(oMat) {
+		var aNames = ["Base Color", "Diffuse Color"];
+		for (var i = 0; i < aNames.length; i++) {
+			var oProp = oMat.findProperty(aNames[i]);
+			if (oProp) return oProp;
+		}
+		return null;
+	}
+
+	function colorToString(oColor) {
+		return "rgb(" + oColor.red + ", " + oColor.green + ", " + oColor.blue + ")";
+	}
+
+	function findRoot(oNode) {
+		if (!oNode) return null;
+		if (oNode.inherits("DzBone")) {
+			var oSkel = oNode.getSkeleton();
+			if (oSkel) oNode = oSkel;
+		}
+		return oNode;
+	}
+
+	function findBusInScene() {
+		var aNodes = Scene.getNodeList();
+		for (var i = 0; i < aNodes.length; i++) {
+			var sLabel = String(aNodes[i].getLabel()).toLowerCase();
+			if (sLabel.indexOf("school bus") >= 0 || sLabel.indexOf("schoolbus") >= 0) {
+				return findRoot(aNodes[i]);
+			}
+		}
+		return null;
+	}
+
+	var oRoot = findRoot(Scene.getPrimarySelection()) || findBusInScene();
+	if (!oRoot) {
+		MessageBox.information("Select the XI School Bus in the Scene pane first.",
+			"XI School Bus - List Surfaces", "&OK");
+		return;
+	}
+
+	var aNodes = [oRoot].concat(oRoot.getNodeChildren(true));
+	var aLines = [];
+	aLines.push("=== XI School Bus surfaces (root: " + oRoot.getLabel() + ") ===");
+
+	for (var n = 0; n < aNodes.length; n++) {
+		var oObj = aNodes[n].getObject();
+		if (!oObj) continue;
+		var oShape = oObj.getCurrentShape();
+		if (!oShape) continue;
+		aLines.push("[Node] " + aNodes[n].getLabel() + " (" + aNodes[n].name + ")");
+		for (var m = 0; m < oShape.getNumMaterials(); m++) {
+			var oMat = oShape.getMaterial(m);
+			var sInfo = "    " + oMat.getLabel() + " | name=" + oMat.name +
+				" | shader=" + oMat.getMaterialName();
+			var oColor = getColorProp(oMat);
+			if (oColor) {
+				sInfo += " | color=" + colorToString(oColor.getColorValue());
+				var oTex = oColor.getMapValue();
+				if (oTex) sInfo += " | map=" + oTex.getFilename();
+			}
+			aLines.push(sInfo);
+		}
+	}
+
+	for (var i = 0; i < aLines.length; i++) print(aLines[i]);
+
+	MessageBox.information(
+		"Found " + (aLines.length - 1) + " lines.\n" +
+		"The full list was written to the log file:\n" +
+		"Help > Troubleshooting > View Log File.",
+		"XI School Bus - List Surfaces", "&OK");
+})();

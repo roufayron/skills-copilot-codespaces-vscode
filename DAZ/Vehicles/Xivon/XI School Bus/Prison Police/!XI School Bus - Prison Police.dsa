@@ -1,0 +1,244 @@
+// DAZ Studio version 4.x
+// XI School Bus - Prison Police (material preset script)
+//
+// Turns the Xivon XI School Bus into a prison / police inmate transport bus:
+//   - yellow school paint  -> white body (Department of Corrections style)
+//   - bumpers, stripes, trim -> satin black
+//   - windows              -> dark tinted glass
+//   - "SCHOOL BUS" sign    -> "DEPARTMENT OF CORRECTIONS" sign
+//   - amber warning lamps  -> police blue (red lamps stay red)
+//   - stop arm / crossing gate -> hidden
+//   - seats                -> dark grey-blue vinyl
+//
+// Usage: select the bus in the Scene pane and double-click this file in the
+// Content Library. Undo with Ctrl+Z. Every change is written to the log
+// (Help > Troubleshooting > View Log File).
+//
+// Surfaces are recognised by name/label keywords and, as a fallback, by their
+// school-bus-yellow color. If something is not recolored, run
+// "XI School Bus - List Surfaces" and add the surface name to the matching
+// keyword list in CONFIG below.
+
+(function () {
+
+	// ------------------------------------------------------------------ CONFIG
+
+	var DRY_RUN = false;            // true = only log what would change
+
+	var SIGN_TEXTURE = "Textures/XI_PrisonBus_Sign_DOC.png";
+	// For a sheriff look use: "Textures/XI_PrisonBus_Sign_Sheriff.png"
+
+	var COLORS = {
+		body:  [236, 236, 232],     // white paint
+		trim:  [22, 22, 24],        // satin black
+		glass: [18, 20, 24],        // dark tint
+		seat:  [48, 56, 70],        // grey-blue vinyl
+		blue:  [20, 70, 255]        // police lamp
+	};
+
+	// Rules are checked top to bottom, the first match wins.
+	// Keywords are matched against the lower-case surface name + label.
+	var RULES = [
+		{ type: "hide",  keys: ["stop arm", "stoparm", "stop_arm", "stop sign", "stopsign", "stop_sign", "crossing", "crossarm", "cross_arm", "cross arm"] },
+		{ type: "glass", keys: ["glass", "window", "windshield", "windscreen", "glas"] },
+		{ type: "amber", keys: ["amber", "orange"] },
+		{ type: "skip",  keys: ["light", "lamp", "lens", "beacon", "strobe", "reflector", "led", "emissive", "emission"] },
+		{ type: "sign",  keys: ["sign", "school", "lettering", "letters", "text", "logo", "decal"] },
+		{ type: "skip",  keys: ["tire", "tyre", "rubber", "wheel", "rim", "hub", "chrome", "mirror", "metal", "steel",
+		                        "alumin", "grill", "exhaust", "engine", "undercarriage", "chassis", "frame", "axle",
+		                        "license", "plate", "interior", "floor", "dash", "ceiling", "gauge", "steering"] },
+		{ type: "trim",  keys: ["bumper", "stripe", "trim", "rubrail", "rub_rail", "rub rail", "rail", "skirt", "fender", "black"] },
+		{ type: "seat",  keys: ["seat", "cushion", "upholster", "vinyl", "fabric"] },
+		{ type: "body",  keys: ["body", "paint", "exterior", "hull", "roof", "door", "hood", "panel", "shell", "cab", "yellow", "main"] }
+	];
+
+	// ----------------------------------------------------------------- HELPERS
+
+	var sScriptDir = new DzFileInfo(getScriptFileName()).path();
+	var aLog = [];
+	var oStats = { body: 0, trim: 0, glass: 0, sign: 0, amber: 0, seat: 0, hide: 0, skip: 0, unknown: 0 };
+
+	function log(sLine) {
+		aLog.push(sLine);
+		print(sLine);
+	}
+
+	function toColor(aRgb) {
+		return new Color(aRgb[0], aRgb[1], aRgb[2]);
+	}
+
+	function findProp(oMat, aNames) {
+		for (var i = 0; i < aNames.length; i++) {
+			var oProp = oMat.findProperty(aNames[i]);
+			if (oProp) return oProp;
+		}
+		return null;
+	}
+
+	function setFloat(oMat, aNames, nValue) {
+		var oProp = findProp(oMat, aNames);
+		if (oProp && !DRY_RUN) oProp.setValue(nValue);
+		return oProp != null;
+	}
+
+	function setColor(oMat, aNames, aRgb, bClearMap) {
+		var oProp = findProp(oMat, aNames);
+		if (!oProp || DRY_RUN) return oProp != null;
+		oProp.setColorValue(toColor(aRgb));
+		if (bClearMap && oProp.isMappable() && oProp.getMapValue()) {
+			oProp.setMap(null);
+		}
+		return true;
+	}
+
+	function setMap(oMat, aNames, sFile) {
+		var oProp = findProp(oMat, aNames);
+		if (!oProp || DRY_RUN) return oProp != null;
+		var oTex = App.getImageMgr().getImage(sFile);
+		oProp.setMap(oTex ? oTex : sFile);
+		return true;
+	}
+
+	var BASE_COLOR = ["Base Color", "Diffuse Color"];
+
+	// School-bus yellow: hue 30..60 degrees, strong saturation.
+	function isSchoolYellow(oMat) {
+		var oProp = findProp(oMat, BASE_COLOR);
+		if (!oProp) return false;
+		var c = oProp.getColorValue();
+		var r = c.red / 255, g = c.green / 255, b = c.blue / 255;
+		var nMax = Math.max(r, g, b), nMin = Math.min(r, g, b);
+		if (nMax < 0.35 || nMax == nMin) return false;
+		var nSat = (nMax - nMin) / nMax;
+		if (nSat < 0.45) return false;
+		var nHue;
+		if (nMax == r) nHue = 60 * (((g - b) / (nMax - nMin)) % 6);
+		else if (nMax == g) nHue = 60 * ((b - r) / (nMax - nMin) + 2);
+		else nHue = 60 * ((r - g) / (nMax - nMin) + 4);
+		if (nHue < 0) nHue += 360;
+		return nHue >= 30 && nHue <= 60;
+	}
+
+	function classify(oMat) {
+		var sKey = (String(oMat.name) + " " + String(oMat.getLabel())).toLowerCase();
+		for (var i = 0; i < RULES.length; i++) {
+			for (var k = 0; k < RULES[i].keys.length; k++) {
+				if (sKey.indexOf(RULES[i].keys[k]) >= 0) return RULES[i].type;
+			}
+		}
+		return isSchoolYellow(oMat) ? "body" : "unknown";
+	}
+
+	// ---------------------------------------------------------------- APPLIERS
+
+	function applyPaint(oMat, aRgb, nRoughness) {
+		setColor(oMat, BASE_COLOR, aRgb, true);
+		setFloat(oMat, ["Metallic Weight"], 0);
+		setFloat(oMat, ["Glossy Layered Weight", "Glossy Weight"], 1);
+		setFloat(oMat, ["Glossy Roughness"], nRoughness);
+		setFloat(oMat, ["Glossiness"], 1 - nRoughness);
+		setFloat(oMat, ["Top Coat Weight"], nRoughness < 0.3 ? 0.6 : 0);
+	}
+
+	var APPLY = {
+		body: function (oMat) {
+			applyPaint(oMat, COLORS.body, 0.25);
+		},
+		trim: function (oMat) {
+			applyPaint(oMat, COLORS.trim, 0.45);
+		},
+		seat: function (oMat) {
+			setColor(oMat, BASE_COLOR, COLORS.seat, true);
+			setFloat(oMat, ["Glossy Roughness"], 0.4);
+		},
+		glass: function (oMat) {
+			setColor(oMat, BASE_COLOR, COLORS.glass, false);
+			setColor(oMat, ["Refraction Color", "Transmitted Color"], [70, 76, 84], false);
+			setFloat(oMat, ["Cutout Opacity", "Opacity Strength"], 1);
+		},
+		sign: function (oMat) {
+			setColor(oMat, BASE_COLOR, [255, 255, 255], false);
+			setMap(oMat, BASE_COLOR, sScriptDir + "/" + SIGN_TEXTURE);
+		},
+		amber: function (oMat) {
+			setColor(oMat, BASE_COLOR, COLORS.blue, false);
+			var oEmit = findProp(oMat, ["Emission Color"]);
+			if (oEmit && !DRY_RUN) {
+				var c = oEmit.getColorValue();
+				// only recolor lamps that actually glow
+				if (c.red + c.green + c.blue > 0) oEmit.setColorValue(toColor(COLORS.blue));
+			}
+		},
+		hide: function (oMat) {
+			setFloat(oMat, ["Cutout Opacity", "Opacity Strength"], 0);
+		}
+	};
+
+	function findRoot(oNode) {
+		if (!oNode) return null;
+		if (oNode.inherits("DzBone")) {
+			var oSkel = oNode.getSkeleton();
+			if (oSkel) oNode = oSkel;
+		}
+		return oNode;
+	}
+
+	function findBusInScene() {
+		var aNodes = Scene.getNodeList();
+		for (var i = 0; i < aNodes.length; i++) {
+			var sLabel = String(aNodes[i].getLabel()).toLowerCase();
+			if (sLabel.indexOf("school bus") >= 0 || sLabel.indexOf("schoolbus") >= 0) {
+				return findRoot(aNodes[i]);
+			}
+		}
+		return null;
+	}
+
+	// -------------------------------------------------------------------- MAIN
+
+	var oRoot = findRoot(Scene.getPrimarySelection()) || findBusInScene();
+	if (!oRoot) {
+		MessageBox.information("Select the XI School Bus in the Scene pane first.",
+			"XI School Bus - Prison Police", "&OK");
+		return;
+	}
+
+	var aNodes = [oRoot].concat(oRoot.getNodeChildren(true));
+	log("=== XI School Bus - Prison Police" + (DRY_RUN ? " (DRY RUN)" : "") +
+		" on '" + oRoot.getLabel() + "' ===");
+
+	if (!DRY_RUN) beginUndo();
+
+	for (var n = 0; n < aNodes.length; n++) {
+		var oObj = aNodes[n].getObject();
+		if (!oObj) continue;
+		var oShape = oObj.getCurrentShape();
+		if (!oShape) continue;
+		for (var m = 0; m < oShape.getNumMaterials(); m++) {
+			var oMat = oShape.getMaterial(m);
+			var sType = classify(oMat);
+			oStats[sType]++;
+			log("  [" + sType + "] " + aNodes[n].getLabel() + " / " + oMat.getLabel());
+			if (APPLY[sType]) APPLY[sType](oMat);
+		}
+	}
+
+	if (!DRY_RUN) acceptUndo("XI School Bus - Prison Police");
+
+	var sSummary =
+		"Body (white): " + oStats.body + "\n" +
+		"Trim (black): " + oStats.trim + "\n" +
+		"Glass (tinted): " + oStats.glass + "\n" +
+		"Signs: " + oStats.sign + "\n" +
+		"Amber -> blue lamps: " + oStats.amber + "\n" +
+		"Seats: " + oStats.seat + "\n" +
+		"Hidden (stop arm etc.): " + oStats.hide + "\n" +
+		"Left as is: " + (oStats.skip + oStats.unknown) + "\n\n" +
+		"Details: Help > Troubleshooting > View Log File.\n" +
+		"To keep the result as a normal preset: select the bus,\n" +
+		"File > Save As > Material(s) Preset.";
+	log(sSummary);
+
+	MessageBox.information(sSummary,
+		"XI School Bus - Prison Police" + (DRY_RUN ? " (dry run)" : ""), "&OK");
+})();
